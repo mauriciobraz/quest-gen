@@ -10,8 +10,10 @@ To run this tool, you need to have Node.js and npm installed on your machine.
 
 Install the necessary dependencies by running:
 
+- [Bun](https://bun.sh/docs/installation)
+
 ```bash
-$ npm install commander glob langchain chalk pdf-parse ora
+$ bun add commander glob langchain chalk pdf-parse ora
 ```
 
 ## Usage
@@ -32,5 +34,5 @@ You can use the following command line options to customize the tool's behavior:
 To run the tool, use the following command:
 
 ```bash
-$ node index.js -d ./data -o ./questions.json -k YOUR_OPENAI_API_KEY -m gpt-3.5-turbo -q 25 -t 500
+$ bun start -d ./data -o ./questions.json -k YOUR_OPENAI_API_KEY -m gpt-3.5-turbo -q 25 -t 500
 ```

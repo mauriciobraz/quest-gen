@@ -78,8 +78,6 @@ const spinner = ora({
   text: 'Starting "Questions Generator"',
 });
 
-spinner.start();
-
 const REQUIRED_OPTIONS = ["directory", "output"];
 
 if (process.env.OPENAI_API_KEY === undefined) {
@@ -258,6 +256,8 @@ async function generateQuestions(document: Document, openai: OpenAI) {
 }
 
 async function main() {
+  spinner.start();
+
   const openai = new OpenAI({
     modelName: options.model,
     openAIApiKey: options.key || process.env.OPENAI_API_KEY,
