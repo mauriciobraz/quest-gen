@@ -1,294 +1,41 @@
-import { createHash } from "crypto";
-import { resolve } from "path";
-import fs from "fs/promises";
-import os from "os";
+import { Command } from "commander";
 
-import ora from "ora";
-import { glob } from "glob";
-import { program } from "commander";
-import chalk, { ChalkInstance } from "chalk";
+import { QuestGenSubCommand } from "./commands/quest-gen";
+import { SubCommand } from "./types";
 
-import { OpenAI } from "langchain/llms/openai";
-import { Document } from "langchain/document";
+const SUB_COMMANDS: SubCommand<Record<string, unknown>>[] = [
+  new QuestGenSubCommand(),
+];
 
-import { DirectoryLoader } from "langchain/document_loaders/fs/directory";
-
-import { CSVLoader } from "langchain/document_loaders/fs/csv";
-import { DocxLoader } from "langchain/document_loaders/fs/docx";
-import { EPubLoader } from "langchain/document_loaders/fs/epub";
-import { PDFLoader } from "langchain/document_loaders/fs/pdf";
-import { TextLoader } from "langchain/document_loaders/fs/text";
-import {
-  JSONLinesLoader,
-  JSONLoader,
-} from "langchain/document_loaders/fs/json";
-
-program
-  .option(
-    "-d, --directory <directory>",
-    "Specify the directory where the documents to be processed are located. Default is './data'.",
-  )
-  .option(
-    "-o, --output <output>",
-    "Specify the file path where the generated questions should be written. Default is './questions.json'.",
-  )
-  .option(
-    "-k, --key <key>",
-    'Specify the OpenAI API key. If not provided, it will default to the value of the "OPENAI_API_KEY" environment variable.',
-  )
-  .option(
-    "-m, --model <model>",
-    "Specify the OpenAI model to use for question generation. If not provided, it will default to 'gpt-3.5-turbo' or the value of the OPENAI_MODEL environment variable.",
-  )
-  .option(
-    "-q, --questions <questions>",
-    "Specify the number of questions to generate per document. Default is '25'.",
-  )
-  .option(
-    "-s, --stream",
-    "If set, questions will be streamed as they are generated. This feature is not yet supported.",
-    false,
-  )
-  .option(
-    "-t, --tokens <tokens>",
-    "Specify the maximum number of tokens to generate per question. This can be used to limit the length of generated questions.",
-  )
-  .option(
-    "-c, --cache",
-    "If set, the cache will be disabled. This will cause the documents to be reloaded and pre-processed every time the program is run.",
-    true,
-  );
-
-program.parse();
-
-const options = program.opts<{
-  directory: string;
-  questions: string;
-  output: string;
-  model: string;
-
-  stream: boolean;
-  cache: boolean;
-
-  tokens?: string;
-  key?: string;
-}>();
-
-const spinner = ora({
-  text: 'Starting "Questions Generator"',
-});
-
-const REQUIRED_OPTIONS = ["directory", "output"];
-
-if (process.env.OPENAI_API_KEY === undefined) {
-  REQUIRED_OPTIONS.push("key");
-}
-
-for (const option of REQUIRED_OPTIONS) {
-  if (!options[option as keyof typeof options]) {
-    program.error(
-      `Missing required option: ${option}. See --help for more information.`,
-    );
+async function registerSubCommands(program: Command) {
+  for (const subCommandInfo of SUB_COMMANDS) {
+    const subCommand = await subCommandInfo.register();
+    program.addCommand(subCommand);
   }
 }
 
-// TODO: Support streaming.
-if (options.stream) {
-  program.error(
-    "Streaming is not yet supported, please disable the --stream option.",
-  );
-}
-
-/**
- * Variables
- * - `{document}`: The document to analyze.
- * - `{numQuestions}`: The number of questions to generate.
- */
-const PROMPT_TEMPLATE =
-  'Expert Question Generator, style of Gladwell & Pink. Analyze: "{document}", generate {numQuestions} diverse, comprehensive questions, adjustable complexity, for students to professionals. Skip with a single \n. No answers.';
-
-const QUESTIONS_PER_DOCUMENT = parseInt(options.questions, 10);
-
-type LogType = "INFO" | "WARN" | "ERROR";
-
-const LOG_COLORS: Record<LogType, ChalkInstance> = {
-  WARN: chalk.yellow,
-  INFO: chalk.green,
-  ERROR: chalk.red,
-};
-
-const LOG_PREFIXES: Record<LogType, string> = {
-  WARN: "⚠",
-  INFO: "ℹ",
-  ERROR: "✖",
-};
-
-/**
- * Logs a message to the console.
- * @param message Message to log.
- * @param type Type of message to log.
- */
-function log(message: string, type: "INFO" | "WARN" | "ERROR" = "INFO") {
-  console.log(LOG_COLORS[type](`${LOG_PREFIXES[type]} ${message}`));
-}
-
-/**
- * Removes repeated newlines from a string and trims it to remove leading and trailing whitespace.
- * @param documents Documents to pre-process before sending to OpenAI.
- * @returns Pre-processed documents.
- */
-async function preProcessDocuments(documents: Document<Record<string, any>>[]) {
-  return documents.map((document): typeof document => ({
-    ...document,
-    pageContent: document.pageContent.replace(/\n{2,}/g, "\n").trim(),
-  }));
-}
-
-/**
- * Saves data to a temporary file for caching.
- * @param id Unique ID for the document.
- * @param data Data to cache.
- */
-function cacheTMP(id: string, data: Buffer) {
-  return fs.writeFile(resolve(os.tmpdir(), `QG_${id}.bin`), data);
-}
-
-/**
- * Reads cached data from a temporary file (@see {@link hash}).
- * @param id Unique ID for the document.
- * @returns Cached data.
- */
-function readTMP(id: string) {
-  return fs.readFile(resolve(os.tmpdir(), `QG_${id}.bin`));
-}
-
-/**
- * Hashes a string using MD5.
- * @param input String to hash.
- * @returns Hash of the input string.
- */
-function hash(input: string) {
-  return createHash("md5").update(input).digest("hex");
-}
-
-/**
- * Gets the hash of a directory by hashing the modification time of each file in the directory.
- * @param path Path to the directory to hash.
- * @returns Hash of the directory.
- */
-async function getDirectoryHash(path: string) {
-  const files = await glob(resolve(path, "**/*"), {
-    cwd: path,
-    nodir: true,
-  });
-
-  const fileInfos = await Promise.all(
-    files.map(
-      async (file) => `${file}:${(await fs.stat(resolve(path, file))).mtimeMs}`,
-    ),
+async function findSubCommandExecutable(program: Command) {
+  const foundCommand = SUB_COMMANDS.find(async (subCommandInfo) =>
+    (await subCommandInfo.register()).name(),
   );
 
-  return hash(fileInfos.join(","));
-}
-
-/**
- * Loads documents from a directory and pre-processes them with {@link preProcessDocuments}.
- * @param path Path to the directory containing the documents.
- * @returns Documents loaded from the directory.
- */
-async function loadDocuments(path: string) {
-  const loader = new DirectoryLoader(path, {
-    ".pdf": (path) => new PDFLoader(path),
-    ".txt": (path) => new TextLoader(path),
-    ".docx": (path) => new DocxLoader(path),
-    ".epub": (path) => new EPubLoader(path),
-    ".csv": (path) => new CSVLoader(path, "text"),
-    ".json": (path) => new JSONLoader(path, "/texts"),
-    ".jsonl": (path) => new JSONLinesLoader(path, "/html"),
-  });
-
-  if (!options.cache) {
-    return (await loader.load().then(preProcessDocuments)) as Document[];
+  if (!foundCommand) {
+    throw new Error("Unknown subcommand");
   }
 
-  const pathHash = await getDirectoryHash(path);
-
-  try {
-    const cachedData = await readTMP(pathHash);
-
-    spinner.text = `[${pathHash}] Cache hit, skipping document loading and pre-processing.`;
-
-    return JSON.parse(cachedData.toString()) as Document[];
-  } catch (error) {}
-
-  spinner.text = `[${pathHash}] Loading documents from ${path} and pre-processing.`;
-
-  const processedDocuments = await loader.load().then(preProcessDocuments);
-  await cacheTMP(pathHash, Buffer.from(JSON.stringify(processedDocuments)));
-
-  spinner.text = `[${pathHash}] Cached ${processedDocuments.length} documents from ${path}.`;
-
-  return processedDocuments as Document[];
-}
-
-/**
- * Generates questions for a document using the OpenAI API.
- * @param document Document to generate questions for.
- * @param openai Instance of the OpenAI API client.
- * @returns Questions generated for the document.
- */
-async function generateQuestions(document: Document, openai: OpenAI) {
-  const prompt = PROMPT_TEMPLATE.replace(
-    "{document}",
-    document.pageContent,
-  ).replace("{questions}", QUESTIONS_PER_DOCUMENT.toString());
-
-  const generatedQuestions = (await openai.call(prompt))
-    .split("\n")
-    .map((question) =>
-      question
-        .trim()
-        .replace(/\n{2,}/g, "\n")
-        .replace(/^\d+\.\s+/, ""),
-    );
-
-  return generatedQuestions.filter((question) => question.length > 0);
+  return foundCommand;
 }
 
 async function main() {
-  spinner.start();
+  const program = new Command().version("0.0.1").name("blai");
+  await registerSubCommands(program);
 
-  const openai = new OpenAI({
-    modelName: options.model,
-    openAIApiKey: options.key || process.env.OPENAI_API_KEY,
-    maxTokens: options.tokens ? parseInt(options.tokens, 10) : undefined,
-  });
+  const command = await program.parseAsync(process.argv);
 
-  const documents = await loadDocuments(options.directory);
-  const questions: string[][] = [];
-
-  await Promise.all(
-    documents.map(async (document, index) => {
-      spinner.text = `[${index}/${documents.length}] Generating questions`;
-
-      const generatedQuestions = await generateQuestions(document, openai);
-      questions.push(generatedQuestions);
-
-      spinner.text = `[${index}/${documents.length}] Generated ${generatedQuestions.length} questions`;
-
-      // Rewrite the output file with the new questions.
-      // TODO: Stream the questions as they are generated.
-      await fs.writeFile(options.output, JSON.stringify(questions, null, 2));
-    }),
-  );
-
-  spinner.succeed(
-    `Generated ${questions.flat().length} questions for ${
-      documents.length
-    } documents in "${options.output}".`,
-  );
-
-  return questions;
+  const subCommand = await findSubCommandExecutable(command);
+  await subCommand.execute(command.opts());
 }
 
-main().catch((error) => log(`An error occurred: ${error}`, "ERROR"));
+if (import.meta.main) {
+  main();
+}
